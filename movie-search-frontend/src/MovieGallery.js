@@ -1,24 +1,42 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 const MovieGallery = () => {
-  const [query, setQuery] = useState('');
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const initialState = location.state || {
+    query: '',
+    sortOption: 'popularity.desc',
+    genre: '',
+    rating: 0,
+    director: '',
+  };
+
+  const [query, setQuery] = useState(initialState.query);
   const [movies, setMovies] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [sortOption, setSortOption] = useState(initialState.sortOption);
+  const [genre, setGenre] = useState(initialState.genre);
+  const [rating, setRating] = useState(initialState.rating);
+  const [director, setDirector] = useState(initialState.director);
+  const [favorites, setFavorites] = useState(new Set());
 
   const baseImageUrl = 'https://image.tmdb.org/t/p/w500';
   const backendUrl = 'http://localhost:8080/api/movies';
-  const navigate = useNavigate();
 
-  const fetchMovies = async (searchQuery) => {
-    if (!searchQuery) {
-      setMovies([]);
-      return;
-    }
+  // Fetch movies only when sorting/filtering changes
+  useEffect(() => {
+    fetchMovies();
+  }, [sortOption, genre, rating, director]);
+
+  const fetchMovies = async () => {
     setLoading(true);
     setError(null);
-    const url = `${backendUrl}/search?query=${encodeURIComponent(searchQuery)}`;
+
+const url = `${backendUrl}/search?query=${encodeURIComponent(query)}&sort=${encodeURIComponent(sortOption)}&genre=${encodeURIComponent(genre)}&rating=${encodeURIComponent(Number(rating))}&director=${encodeURIComponent(director)}`;
+
     try {
       const response = await fetch(url);
       if (!response.ok) throw new Error('Failed to fetch movies from backend');
@@ -31,20 +49,25 @@ const MovieGallery = () => {
     }
   };
 
-  const handleSearch = (e) => {
-    e.preventDefault();
-    fetchMovies(query);
-  };
-
-  const handleMovieClick = (movieId) => {
-    console.log('Navigating to:', `/movies/${movieId}`); // Debug
-    navigate(`/movies/${movieId}`); // Pass only the ID
+  const toggleFavorite = (movieId, event) => {
+    event.stopPropagation();
+    setFavorites((prevFavorites) => {
+      const updatedFavorites = new Set(prevFavorites);
+      if (updatedFavorites.has(movieId)) {
+        updatedFavorites.delete(movieId);
+      } else {
+        updatedFavorites.add(movieId);
+      }
+      return updatedFavorites;
+    });
   };
 
   return (
     <div style={{ padding: '20px' }}>
       <h1>Movie Gallery</h1>
-      <form onSubmit={handleSearch}>
+
+      {/* Search Form */}
+      <form onSubmit={(e) => { e.preventDefault(); fetchMovies(); }}>
         <input
           type="text"
           value={query}
@@ -55,15 +78,54 @@ const MovieGallery = () => {
         <button type="submit" style={{ padding: '8px 16px' }}>Search</button>
       </form>
 
+      {/* Sorting & Filtering Options */}
+      <div style={{ marginTop: '20px', display: 'flex', gap: '20px' }}>
+        <select value={sortOption} onChange={(e) => setSortOption(e.target.value)}>
+          <option value="popularity.desc">Sort by Popularity (High to Low)</option>
+          <option value="popularity.asc">Sort by Popularity (Low to High)</option>
+          <option value="release_date.desc">Newest First</option>
+          <option value="release_date.asc">Oldest First</option>
+          <option value="vote_average.desc">Rating (High to Low)</option>
+          <option value="vote_average.asc">Rating (Low to High)</option>
+        </select>
+
+        <select value={genre} onChange={(e) => setGenre(e.target.value)}>
+          <option value="">All Genres</option>
+          <option value="action">Action</option>
+          <option value="drama">Drama</option>
+          <option value="comedy">Comedy</option>
+          <option value="thriller">Thriller</option>
+          <option value="horror">Horror</option>
+          <option value="Science Fiction">Sci-Fi</option>
+          <option value="romance">Romance</option>
+        </select>
+
+        <input
+          type="text"
+          value={director}
+          onChange={(e) => setDirector(e.target.value)}
+          placeholder="Filter by Director"
+          style={{ padding: '8px', width: '200px' }}
+        />
+
+        <label>Minimum Rating:</label>
+        <select value={rating} onChange={(e) => setRating(e.target.value)}>
+          {[...Array(11).keys()].map((num) => (
+            <option key={num} value={num}>{num}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Loading & Error Messages */}
       {loading && <p>Loading...</p>}
       {error && <p style={{ color: 'red' }}>Error: {error}</p>}
       {movies.length === 0 && !loading && !error && query && <p>No movies found.</p>}
 
+      {/* Movie List */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', marginTop: '20px' }}>
         {movies.map((movie) => (
           <div
             key={movie.id}
-            onClick={() => handleMovieClick(movie.id)} // Pass movie.id
             style={{
               width: '200px',
               textAlign: 'center',
@@ -72,9 +134,9 @@ const MovieGallery = () => {
               borderRadius: '8px',
               padding: '10px',
               transition: 'transform 0.2s',
+              position: 'relative',
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
-            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+            onClick={() => navigate(`/movies/${movie.id}`, { state: { query, sortOption, genre, rating, director } })}
           >
             <h3 style={{ fontSize: '16px', margin: '10px 0' }}>{movie.title}</h3>
             {movie.poster_path ? (
@@ -98,6 +160,21 @@ const MovieGallery = () => {
                 No Poster
               </div>
             )}
+
+            {/* Favorite Button */}
+            <span
+              style={{
+                position: 'absolute',
+                top: '10px',
+                right: '10px',
+                fontSize: '24px',
+                cursor: 'pointer',
+                color: favorites.has(movie.id) ? 'red' : 'gray',
+              }}
+              onClick={(e) => toggleFavorite(movie.id, e)}
+            >
+              {favorites.has(movie.id) ? '❤️' : '🤍'}
+            </span>
           </div>
         ))}
       </div>
