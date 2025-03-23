@@ -178,34 +178,67 @@ public class MovieService {
     }
 
     private List<Map<String, Object>> searchByDirector(String director, String year) {
+        // Construct search URL for the director
         String personUrl = String.format("%s/search/person?api_key=%s&query=%s",
                 apiUrl, apiKey, director.replace(" ", "+"));
         System.out.println("Searching director with URL: " + personUrl);
+
+        // Fetch response
         Map<String, Object> personResponse = restTemplate.getForObject(personUrl, Map.class);
+        if (personResponse == null || !personResponse.containsKey("results")) {
+            return new ArrayList<>();
+        }
+
+        // Extract list of potential directors
         List<Map<String, Object>> persons = (List<Map<String, Object>>) personResponse.get("results");
         if (persons == null || persons.isEmpty()) {
             return new ArrayList<>();
         }
+
+        // Find the best matching director
         Integer directorId = null;
         for (Map<String, Object> p : persons) {
+            String name = (String) p.get("name");
             String dept = (String) p.get("known_for_department");
+
             if (dept != null && dept.equalsIgnoreCase("Directing")) {
-                directorId = (Integer) p.get("id");
-                break;
+                // If an exact match is found, use it immediately
+                if (name.equalsIgnoreCase(director)) {
+                    directorId = (Integer) p.get("id");
+                    break;
+                }
+                // Store the first match if an exact match isn't found
+                if (directorId == null) {
+                    directorId = (Integer) p.get("id");
+                }
             }
         }
+
+        // If no director ID found, return empty result
         if (directorId == null) {
             return new ArrayList<>();
         }
+
+        // Fetch director's movie credits
         String creditsUrl = String.format("%s/person/%s/movie_credits?api_key=%s",
                 apiUrl, directorId, apiKey);
         Map<String, Object> creditsResponse = restTemplate.getForObject(creditsUrl, Map.class);
+        if (creditsResponse == null || !creditsResponse.containsKey("crew")) {
+            return new ArrayList<>();
+        }
+
+        // Filter movies directed by the selected director
         List<Map<String, Object>> crew = (List<Map<String, Object>>) creditsResponse.get("crew");
         List<Map<String, Object>> movies = new ArrayList<>();
+
         if (crew != null) {
             for (Map<String, Object> movie : crew) {
                 String job = (String) movie.get("job");
+
+                // Ensure only movies directed by the person are added
                 if (!"Director".equalsIgnoreCase(job)) continue;
+
+                // Filter by release year if provided
                 if (year != null && !year.trim().isEmpty()) {
                     String releaseDate = (String) movie.get("release_date");
                     if (releaseDate == null || !releaseDate.startsWith(year)) {
@@ -215,8 +248,10 @@ public class MovieService {
                 movies.add(movie);
             }
         }
+
         return movies;
     }
+
 
     private List<Map<String, Object>> searchByGenre(String genre, String year) {
         String normalizedGenre = genre.toLowerCase();
