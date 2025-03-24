@@ -21,6 +21,11 @@ public class MovieService {
         Dotenv dotenv = Dotenv.load();
         this.apiKey = dotenv.get("TMDB_API_KEY");
         this.apiUrl = dotenv.get("TMDB_API_URL");
+        System.out.println("TMDB_API_KEY: " + (this.apiKey != null ? "Set" : "Null"));
+        System.out.println("TMDB_API_URL: " + (this.apiUrl != null ? this.apiUrl : "Null"));
+        if (this.apiKey == null || this.apiUrl == null) {
+            throw new IllegalStateException("TMDB_API_KEY or TMDB_API_URL is not set in .env");
+        }
     }
 
     public Map<String, Object> getMovieDetails(String title) {
@@ -64,8 +69,27 @@ public class MovieService {
         genreMap.put("western", "37");
     }
     public Map<String, Object> getMovieDetails(Integer movieId) {
+        // Fetch movie details
         String detailsUrl = String.format("%s/movie/%s?api_key=%s", apiUrl, movieId, apiKey);
         Map<String, Object> details = restTemplate.getForObject(detailsUrl, Map.class);
+
+        // Fetch trailer data
+        String trailerUrl = null;
+        String videosUrl = String.format("%s/movie/%s/videos?api_key=%s", apiUrl, movieId, apiKey);
+        Map<String, Object> videosResponse = restTemplate.getForObject(videosUrl, Map.class);
+
+        if (videosResponse != null && videosResponse.get("results") != null) {
+            List<Map<String, Object>> videos = (List<Map<String, Object>>) videosResponse.get("results");
+            for (Map<String, Object> video : videos) {
+                if ("Trailer".equals(video.get("type")) && "YouTube".equals(video.get("site"))) {
+                    String videoKey = (String) video.get("key");
+                    trailerUrl = "https://www.youtube.com/embed/" + videoKey; // Embed URL
+                    break; // Take the first YouTube trailer
+                }
+            }
+        }
+
+        // Construct response with details and trailer
         if (details != null) {
             Map<String, Object> response = new HashMap<>();
             response.put("id", movieId);
@@ -76,9 +100,11 @@ public class MovieService {
             response.put("genres", details.get("genres"));
             response.put("runtime", details.get("runtime"));
             response.put("vote_average", details.get("vote_average"));
+            response.put("trailerUrl", trailerUrl); // Add trailer URL here
             return response;
         }
-        return new HashMap<>();
+
+        return new HashMap<>(); // Return empty map if details are null
     }
     public List<Map<String, Object>> searchMovies(String title, String genre, String director, String year) {
         if (title != null && !title.trim().isEmpty()) {

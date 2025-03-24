@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+<<<<<<< HEAD
 import { useNavigate, useLocation } from 'react-router-dom';
 
 const MovieGallery = () => {
@@ -14,6 +15,12 @@ const MovieGallery = () => {
   };
 
   const [query, setQuery] = useState(initialState.query);
+=======
+import { useNavigate } from 'react-router-dom';
+
+const MovieGallery = ({ auth0Client, isAuthenticated }) => {
+  const [query, setQuery] = useState('');
+>>>>>>> 267d0d5 (Updated movie search project with frontend and backend changes)
   const [movies, setMovies] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -26,19 +33,32 @@ const MovieGallery = () => {
   const baseImageUrl = 'https://image.tmdb.org/t/p/w500';
   const backendUrl = 'http://localhost:8080/api/movies';
 
+<<<<<<< HEAD
   // Fetch movies only when sorting/filtering changes
   useEffect(() => {
     fetchMovies();
   }, [sortOption, genre, rating, director]);
 
   const fetchMovies = async () => {
+=======
+  const fetchMovies = async (searchQuery) => {
+    if (!searchQuery || !isAuthenticated || !auth0Client) {
+      setMovies([]);
+      return;
+    }
+>>>>>>> 267d0d5 (Updated movie search project with frontend and backend changes)
     setLoading(true);
     setError(null);
 
 const url = `${backendUrl}/search?query=${encodeURIComponent(query)}&sort=${encodeURIComponent(sortOption)}&genre=${encodeURIComponent(genre)}&rating=${encodeURIComponent(Number(rating))}&director=${encodeURIComponent(director)}`;
 
     try {
-      const response = await fetch(url);
+      const token = await auth0Client.getTokenSilently();
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
       if (!response.ok) throw new Error('Failed to fetch movies from backend');
       const data = await response.json();
       setMovies(data || []);
@@ -49,6 +69,7 @@ const url = `${backendUrl}/search?query=${encodeURIComponent(query)}&sort=${enco
     }
   };
 
+<<<<<<< HEAD
   const toggleFavorite = (movieId, event) => {
     event.stopPropagation();
     setFavorites((prevFavorites) => {
@@ -60,7 +81,24 @@ const url = `${backendUrl}/search?query=${encodeURIComponent(query)}&sort=${enco
       }
       return updatedFavorites;
     });
+=======
+  const handleSearch = (e) => {
+    e.preventDefault();
+    fetchMovies(query);
   };
+
+  const handleMovieClick = (movieId) => {
+    navigate(`/movies/${movieId}`);
+>>>>>>> 267d0d5 (Updated movie search project with frontend and backend changes)
+  };
+
+  useEffect(() => {
+    if (!isAuthenticated && auth0Client) {
+      auth0Client.loginWithRedirect();
+    }
+  }, [isAuthenticated, auth0Client]);
+
+  if (!isAuthenticated) return null;
 
   return (
     <div style={{ padding: '20px' }}>
@@ -126,6 +164,10 @@ const url = `${backendUrl}/search?query=${encodeURIComponent(query)}&sort=${enco
         {movies.map((movie) => (
           <div
             key={movie.id}
+<<<<<<< HEAD
+=======
+            onClick={() => handleMovieClick(movie.id)}
+>>>>>>> 267d0d5 (Updated movie search project with frontend and backend changes)
             style={{
               width: '200px',
               textAlign: 'center',
