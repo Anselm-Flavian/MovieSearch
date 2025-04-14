@@ -1,52 +1,401 @@
 package com.movie.search.service;
 
+import com.movie.search.model.SearchHistory;
+import com.movie.search.model.User;
+import com.movie.search.repository.SearchHistoryRepository;
+import com.movie.search.repository.UserRepository;
 import io.github.cdimascio.dotenv.Dotenv;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-import com.movie.search.util.FuzzySearchUtil;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.HashMap;
+
+import java.util.*;
+import java.util.logging.Logger;
 
 @Service
 public class MovieService {
 
+    private static final Logger LOGGER = Logger.getLogger(MovieService.class.getName());
+
     private final String apiKey;
     private final String apiUrl;
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final TmdbClient tmdbClient;
+    private final UserRepository userRepository;
+    private final SearchHistoryRepository searchHistoryRepository;
 
-    public MovieService() {
+    @Autowired
+    public MovieService(TmdbClient tmdbClient, UserRepository userRepository, SearchHistoryRepository searchHistoryRepository) {
         Dotenv dotenv = Dotenv.load();
         this.apiKey = dotenv.get("TMDB_API_KEY");
         this.apiUrl = dotenv.get("TMDB_API_URL");
-        System.out.println("TMDB_API_KEY: " + (this.apiKey != null ? "Set" : "Null"));
-        System.out.println("TMDB_API_URL: " + (this.apiUrl != null ? this.apiUrl : "Null"));
+        this.tmdbClient = tmdbClient;
+        this.userRepository = userRepository;
+        this.searchHistoryRepository = searchHistoryRepository;
+
+        LOGGER.info("TMDB_API_KEY: " + (this.apiKey != null ? "Set" : "Null"));
+        LOGGER.info("TMDB_API_URL: " + (this.apiUrl != null ? this.apiUrl : "Null"));
         if (this.apiKey == null || this.apiUrl == null) {
             throw new IllegalStateException("TMDB_API_KEY or TMDB_API_URL is not set in .env");
         }
     }
 
-    public Map<String, Object> getMovieDetails(String title) {
-        if (title == null || title.trim().isEmpty()) {
-            throw new IllegalArgumentException("Movie title cannot be empty");
+    public List<Map<String, Object>> searchMovies(String title, String genre, String director, String year, String auth0Id) {
+        LOGGER.info("Searching movies with: title=" + title + ", genre=" + genre + ", director=" + director + ", year=" + year + ", auth0Id=" + auth0Id);
+
+        if (auth0Id != null && !auth0Id.isEmpty()) {
+            User user = userRepository.findByAuth0Id(auth0Id)
+                    .orElseGet(() -> {
+                        User newUser = new User();
+                        newUser.setAuth0Id(auth0Id);
+                        newUser.setUsername("tempUsername");
+                        newUser.setEmail("temp@example.com");
+                        return userRepository.save(newUser);
+                    });
+
+            String searchQuery = buildSearchQuery(title, genre, director, year);
+            SearchHistory history = new SearchHistory();
+            history.setUser(user);
+            history.setSearchQuery(searchQuery);
+            searchHistoryRepository.save(history);
+            LOGGER.info("Search history saved for auth0Id=" + auth0Id + ": " + searchQuery);
         }
-        String searchUrl = String.format("%s/search/movie?api_key=%s&query=%s",
-                apiUrl, apiKey, title.replace(" ", "+"));
-        System.out.println("Searching with URL: " + searchUrl);
-        Map<String, Object> searchResponse = restTemplate.getForObject(searchUrl, Map.class);
-        List<Map<String, Object>> results = (List<Map<String, Object>>) searchResponse.get("results");
-        if (results == null || results.isEmpty()) {
-            return Collections.emptyMap();
+
+        if (title != null && !title.trim().isEmpty()) {
+            return searchByTitle(title, genre, director, year);
         }
-        Integer movieId = (Integer) results.get(0).get("id");
-        String detailsUrl = String.format("%s/movie/%s?api_key=%s", apiUrl, movieId, apiKey);
-        System.out.println("Fetching details from URL: " + detailsUrl);
-        return restTemplate.getForObject(detailsUrl, Map.class);
+        if (director != null && !director.trim().isEmpty()) {
+            return searchByDirector(director, year);
+        }
+        if (genre != null && !genre.trim().isEmpty()) {
+            return searchByGenre(genre, year);
+        }
+        if (year != null && !year.trim().isEmpty()) {
+            return searchByYear(year);
+        }
+
+        LOGGER.warning("No valid search parameters provided");
+        return new ArrayList<>();
     }
 
-    private final static Map<String, String> genreMap = new HashMap<>();
+    private String buildSearchQuery(String title, String genre, String director, String year) {
+        StringBuilder query = new StringBuilder();
+        if (title != null) query.append("title=").append(title);
+        if (genre != null) query.append(query.length() > 0 ? ", " : "").append("genre=").append(genre);
+        if (director != null) query.append(query.length() > 0 ? ", " : "").append("director=").append(director);
+        if (year != null) query.append(query.length() > 0 ? ", " : "").append("year=").append(year);
+        return query.toString();
+    }
+
+    public Map<String, Object> getMovieDetails(String title) {
+        LOGGER.info("Fetching movie details for title: " + title);
+        if (title == null || title.trim().isEmpty()) {
+            LOGGER.warning("No title provided for movie details");
+            return new HashMap<>();
+        }
+
+        String searchUrl = String.format("%s/search/movie?api_key=%s&query=%s",
+                apiUrl, apiKey, title.replace(" ", "+"));
+        try {
+            Map<String, Object> searchResponse = tmdbClient.fetchFromTmdb(searchUrl);
+            if (searchResponse == null || !searchResponse.containsKey("results")) {
+                LOGGER.warning("TMDB API returned null or invalid response for title: " + title);
+                return new HashMap<>();
+            }
+
+            List<Map<String, Object>> results = (List<Map<String, Object>>) searchResponse.get("results");
+            if (results == null || results.isEmpty()) {
+                LOGGER.warning("No movies found for title: " + title);
+                return new HashMap<>();
+            }
+
+            Integer movieId = (Integer) results.get(0).get("id");
+            return getMovieDetailsById(movieId);
+        } catch (Exception e) {
+            LOGGER.severe("Error fetching movie details for title '" + title + "': " + e.getMessage());
+            throw new RuntimeException("Failed to get movie details by title", e);
+        }
+    }
+
+    public Map<String, Object> getMovieDetails(Integer movieId) {
+        return getMovieDetailsById(movieId);
+    }
+
+    private Map<String, Object> getMovieDetailsById(Integer movieId) {
+        LOGGER.info("Fetching movie details for ID: " + movieId);
+        if (movieId == null || movieId <= 0) {
+            LOGGER.warning("Invalid movie ID: " + movieId);
+            return new HashMap<>();
+        }
+
+        String detailsUrl = String.format("%s/movie/%s?api_key=%s", apiUrl, movieId, apiKey);
+        try {
+            Map<String, Object> details = tmdbClient.fetchFromTmdb(detailsUrl);
+            if (details == null) {
+                LOGGER.warning("No details found for movie ID: " + movieId);
+                return new HashMap<>();
+            }
+            LOGGER.info("Movie details retrieved for ID: " + movieId);
+            return details;
+        } catch (Exception e) {
+            LOGGER.severe("Error fetching movie details for ID " + movieId + ": " + e.getMessage());
+            throw new RuntimeException("Failed to get movie details by ID", e);
+        }
+    }
+
+    public List<String> getAutocompleteSuggestions(String prefix) {
+        LOGGER.info("Fetching autocomplete suggestions for prefix: " + prefix);
+        if (prefix == null || prefix.trim().isEmpty()) {
+            LOGGER.warning("No prefix provided for autocomplete");
+            return new ArrayList<>();
+        }
+
+        String searchUrl = String.format("%s/search/movie?api_key=%s&query=%s",
+                apiUrl, apiKey, prefix.replace(" ", "+"));
+        try {
+            Map<String, Object> searchResponse = tmdbClient.fetchFromTmdb(searchUrl);
+            if (searchResponse == null || !searchResponse.containsKey("results")) {
+                LOGGER.warning("TMDB API returned null or invalid response for prefix: " + prefix);
+                return new ArrayList<>();
+            }
+
+            List<Map<String, Object>> results = (List<Map<String, Object>>) searchResponse.get("results");
+            if (results == null || results.isEmpty()) {
+                LOGGER.warning("No suggestions found for prefix: " + prefix);
+                return new ArrayList<>();
+            }
+
+            List<String> suggestions = new ArrayList<>();
+            for (Map<String, Object> movie : results.subList(0, Math.min(5, results.size()))) {
+                String title = (String) movie.get("title");
+                if (title != null) {
+                    suggestions.add(title);
+                }
+            }
+            LOGGER.info("Returning " + suggestions.size() + " suggestions");
+            return suggestions;
+        } catch (Exception e) {
+            LOGGER.severe("Error fetching autocomplete suggestions for prefix '" + prefix + "': " + e.getMessage());
+            throw new RuntimeException("Failed to get autocomplete suggestions", e);
+        }
+    }
+
+    private List<Map<String, Object>> searchByTitle(String title, String genre, String director, String year) {
+        LOGGER.info("Searching by title: " + title + ", genre=" + genre + ", director=" + director + ", year=" + year);
+        String query = title.replace(" ", "+");
+        String searchUrl = String.format("%s/search/movie?api_key=%s&query=%s",
+                apiUrl, apiKey, query);
+        if (year != null && !year.trim().isEmpty()) {
+            searchUrl += "&year=" + year;
+        }
+
+        try {
+            Map<String, Object> searchResponse = tmdbClient.fetchFromTmdb(searchUrl);
+            if (!searchResponse.containsKey("results")) {
+                LOGGER.warning("TMDB API returned invalid response for title: " + title + ", response: " + searchResponse);
+                return new ArrayList<>();
+            }
+
+            List<Map<String, Object>> results = (List<Map<String, Object>>) searchResponse.get("results");
+            if (results == null || results.isEmpty()) {
+                LOGGER.warning("No results found for title: " + title);
+                return new ArrayList<>();
+            }
+
+            List<Map<String, Object>> filtered = new ArrayList<>();
+            for (Map<String, Object> movie : results) {
+                Integer movieId = (Integer) movie.get("id");
+                String detailsUrl = String.format("%s/movie/%s?api_key=%s", apiUrl, movieId, apiKey);
+                Map<String, Object> details = tmdbClient.fetchFromTmdb(detailsUrl);
+                if (details == null) continue;
+
+                boolean matches = true;
+                if (genre != null && !genre.trim().isEmpty()) {
+                    List<Map<String, Object>> genres = (List<Map<String, Object>>) details.get("genres");
+                    boolean genreMatch = false;
+                    if (genres != null) {
+                        for (Map<String, Object> g : genres) {
+                            String gName = (String) g.get("name");
+                            if (gName != null && gName.toLowerCase().contains(genre.toLowerCase())) {
+                                genreMatch = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!genreMatch) matches = false;
+                }
+                if (director != null && !director.trim().isEmpty()) {
+                    String creditsUrl = String.format("%s/movie/%s/credits?api_key=%s", apiUrl, movieId, apiKey);
+                    Map<String, Object> credits = tmdbClient.fetchFromTmdb(creditsUrl);
+                    List<Map<String, Object>> crew = (List<Map<String, Object>>) credits.get("crew");
+                    boolean directorMatch = false;
+                    if (crew != null) {
+                        for (Map<String, Object> crewMember : crew) {
+                            String job = (String) crewMember.get("job");
+                            String name = (String) crewMember.get("name");
+                            if ("Director".equalsIgnoreCase(job) && name != null &&
+                                    name.toLowerCase().contains(director.toLowerCase())) {
+                                directorMatch = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!directorMatch) matches = false;
+                }
+                if (matches) {
+                    filtered.add(details);
+                }
+            }
+            LOGGER.info("Found " + filtered.size() + " movies for title: " + title);
+            return filtered;
+        } catch (Exception e) {
+            LOGGER.severe("Error searching movies by title '" + title + "': " + e.getMessage() + ", cause: " + (e.getCause() != null ? e.getCause().getMessage() : "none"));
+            throw new RuntimeException("Failed to search movies by title", e);
+        }
+    }
+
+    private List<Map<String, Object>> searchByDirector(String director, String year) {
+        LOGGER.info("Searching by director: " + director + ", year=" + year);
+        String personUrl = String.format("%s/search/person?api_key=%s&query=%s",
+                apiUrl, apiKey, director.replace(" ", "+"));
+
+        try {
+            Map<String, Object> personResponse = tmdbClient.fetchFromTmdb(personUrl);
+            if (personResponse == null || !personResponse.containsKey("results")) {
+                LOGGER.warning("TMDB API returned null or invalid response for director: " + director);
+                return new ArrayList<>();
+            }
+
+            List<Map<String, Object>> persons = (List<Map<String, Object>>) personResponse.get("results");
+            if (persons == null || persons.isEmpty()) {
+                LOGGER.warning("No persons found for director: " + director);
+                return new ArrayList<>();
+            }
+
+            Integer directorId = null;
+            for (Map<String, Object> p : persons) {
+                String name = (String) p.get("name");
+                String dept = (String) p.get("known_for_department");
+                if (dept != null && dept.equalsIgnoreCase("Directing")) {
+                    if (name.equalsIgnoreCase(director)) {
+                        directorId = (Integer) p.get("id");
+                        break;
+                    }
+                    if (directorId == null) {
+                        directorId = (Integer) p.get("id");
+                    }
+                }
+            }
+
+            if (directorId == null) {
+                LOGGER.warning("No director ID found for: " + director);
+                return new ArrayList<>();
+            }
+
+            String creditsUrl = String.format("%s/person/%s/movie_credits?api_key=%s",
+                    apiUrl, directorId, apiKey);
+            Map<String, Object> creditsResponse = tmdbClient.fetchFromTmdb(creditsUrl);
+            if (creditsResponse == null || !creditsResponse.containsKey("crew")) {
+                LOGGER.warning("No credits found for director ID: " + directorId);
+                return new ArrayList<>();
+            }
+
+            List<Map<String, Object>> crew = (List<Map<String, Object>>) creditsResponse.get("crew");
+            List<Map<String, Object>> movies = new ArrayList<>();
+            if (crew != null) {
+                for (Map<String, Object> movie : crew) {
+                    String job = (String) movie.get("job");
+                    if (!"Director".equalsIgnoreCase(job)) continue;
+
+                    if (year != null && !year.trim().isEmpty()) {
+                        String releaseDate = (String) movie.get("release_date");
+                        if (releaseDate == null || !releaseDate.startsWith(year)) {
+                            continue;
+                        }
+                    }
+                    Integer movieId = (Integer) movie.get("id");
+                    movies.add(getMovieDetailsById(movieId));
+                }
+            }
+            LOGGER.info("Found " + movies.size() + " movies for director: " + director);
+            return movies;
+        } catch (Exception e) {
+            LOGGER.severe("Error searching movies by director '" + director + "': " + e.getMessage());
+            throw new RuntimeException("Failed to search movies by director", e);
+        }
+    }
+
+    private List<Map<String, Object>> searchByGenre(String genre, String year) {
+        LOGGER.info("Searching by genre: " + genre + ", year=" + year);
+        String normalizedGenre = genre.toLowerCase();
+        String genreId = genreMap.get(normalizedGenre);
+        if (genreId == null) {
+            LOGGER.warning("Invalid genre: " + genre);
+            return new ArrayList<>();
+        }
+
+        String discoverUrl = String.format("%s/discover/movie?api_key=%s&with_genres=%s",
+                apiUrl, apiKey, genreId);
+        if (year != null && !year.trim().isEmpty()) {
+            discoverUrl += "&primary_release_year=" + year;
+        }
+
+        try {
+            Map<String, Object> discoverResponse = tmdbClient.fetchFromTmdb(discoverUrl);
+            if (discoverResponse == null || !discoverResponse.containsKey("results")) {
+                LOGGER.warning("TMDB API returned null or invalid response for genre: " + genre);
+                return new ArrayList<>();
+            }
+
+            List<Map<String, Object>> results = (List<Map<String, Object>>) discoverResponse.get("results");
+            if (results == null || results.isEmpty()) {
+                LOGGER.warning("No movies found for genre: " + genre);
+                return new ArrayList<>();
+            }
+
+            List<Map<String, Object>> movies = new ArrayList<>();
+            for (Map<String, Object> movie : results) {
+                Integer movieId = (Integer) movie.get("id");
+                movies.add(getMovieDetailsById(movieId));
+            }
+            LOGGER.info("Found " + movies.size() + " movies for genre: " + genre);
+            return movies;
+        } catch (Exception e) {
+            LOGGER.severe("Error searching movies by genre '" + genre + "': " + e.getMessage());
+            throw new RuntimeException("Failed to search movies by genre", e);
+        }
+    }
+
+    private List<Map<String, Object>> searchByYear(String year) {
+        LOGGER.info("Searching by year: " + year);
+        String discoverUrl = String.format("%s/discover/movie?api_key=%s&primary_release_year=%s",
+                apiUrl, apiKey, year);
+
+        try {
+            Map<String, Object> discoverResponse = tmdbClient.fetchFromTmdb(discoverUrl);
+            if (discoverResponse == null || !discoverResponse.containsKey("results")) {
+                LOGGER.warning("TMDB API returned null or invalid response for year: " + year);
+                return new ArrayList<>();
+            }
+
+            List<Map<String, Object>> results = (List<Map<String, Object>>) discoverResponse.get("results");
+            if (results == null || results.isEmpty()) {
+                LOGGER.warning("No movies found for year: " + year);
+                return new ArrayList<>();
+            }
+
+            List<Map<String, Object>> movies = new ArrayList<>();
+            for (Map<String, Object> movie : results) {
+                Integer movieId = (Integer) movie.get("id");
+                movies.add(getMovieDetailsById(movieId));
+            }
+            LOGGER.info("Found " + movies.size() + " movies for year: " + year);
+            return movies;
+        } catch (Exception e) {
+            LOGGER.severe("Error searching movies by year '" + year + "': " + e.getMessage());
+            throw new RuntimeException("Failed to search movies by year", e);
+        }
+    }
+
+    private static final Map<String, String> genreMap = new HashMap<>();
     static {
         genreMap.put("action", "28");
         genreMap.put("adventure", "12");
@@ -67,249 +416,5 @@ public class MovieService {
         genreMap.put("thriller", "53");
         genreMap.put("war", "10752");
         genreMap.put("western", "37");
-    }
-    public Map<String, Object> getMovieDetails(Integer movieId) {
-        // Fetch movie details
-        String detailsUrl = String.format("%s/movie/%s?api_key=%s", apiUrl, movieId, apiKey);
-        Map<String, Object> details = restTemplate.getForObject(detailsUrl, Map.class);
-
-        // Fetch trailer data
-        String trailerUrl = null;
-        String videosUrl = String.format("%s/movie/%s/videos?api_key=%s", apiUrl, movieId, apiKey);
-        Map<String, Object> videosResponse = restTemplate.getForObject(videosUrl, Map.class);
-
-        if (videosResponse != null && videosResponse.get("results") != null) {
-            List<Map<String, Object>> videos = (List<Map<String, Object>>) videosResponse.get("results");
-            for (Map<String, Object> video : videos) {
-                if ("Trailer".equals(video.get("type")) && "YouTube".equals(video.get("site"))) {
-                    String videoKey = (String) video.get("key");
-                    trailerUrl = "https://www.youtube.com/embed/" + videoKey; // Embed URL
-                    break; // Take the first YouTube trailer
-                }
-            }
-        }
-
-        // Construct response with details and trailer
-        if (details != null) {
-            Map<String, Object> response = new HashMap<>();
-            response.put("id", movieId);
-            response.put("title", details.get("title"));
-            response.put("poster_path", details.get("poster_path"));
-            response.put("release_date", details.get("release_date"));
-            response.put("overview", details.get("overview"));
-            response.put("genres", details.get("genres"));
-            response.put("runtime", details.get("runtime"));
-            response.put("vote_average", details.get("vote_average"));
-            response.put("trailerUrl", trailerUrl); // Add trailer URL here
-            return response;
-        }
-
-        return new HashMap<>(); // Return empty map if details are null
-    }
-    public List<Map<String, Object>> searchMovies(String title, String genre, String director, String year) {
-        if (title != null && !title.trim().isEmpty()) {
-            return searchByTitle(title, genre, director, year);
-        } else if (director != null && !director.trim().isEmpty()) {
-            return searchByDirector(director, year);
-        } else if (genre != null && !genre.trim().isEmpty()) {
-            return searchByGenre(genre, year);
-        } else if (year != null && !year.trim().isEmpty()) {
-            return searchByYear(year);
-        }
-        System.out.println("No search criteria provided, returning empty list");
-        return new ArrayList<>();
-    }
-
-    private List<Map<String, Object>> searchByTitle(String title, String genre, String director, String year) {
-        System.out.println("searchByTitle called with: title=" + title + ", genre=" + genre + ", director=" + director + ", year=" + year);
-        String query = title.length() > 4 ? title : title.substring(0, Math.min(title.length(), 4));
-        String searchUrl = String.format("%s/search/movie?api_key=%s&query=%s",
-                apiUrl, apiKey, query.replace(" ", "+"));
-        if (year != null && !year.trim().isEmpty()) {
-            searchUrl += "&year=" + year;
-        }
-        System.out.println("Searching movies by title with URL: " + searchUrl);
-        try {
-            Map<String, Object> searchResponse = restTemplate.getForObject(searchUrl, Map.class);
-            if (searchResponse == null) {
-                System.out.println("TMDb returned null response");
-                return new ArrayList<>();
-            }
-            List<Map<String, Object>> results = (List<Map<String, Object>>) searchResponse.get("results");
-            if (results == null || results.isEmpty()) {
-                System.out.println("No results from TMDb");
-                return new ArrayList<>();
-            }
-
-            // Apply fuzzy filtering
-            List<Map<String, Object>> fuzzyResults = FuzzySearchUtil.fuzzyFilterMovies(title, results);
-            System.out.println("Fuzzy filtered results: " + fuzzyResults);
-            if (fuzzyResults.isEmpty()) {
-                System.out.println("No fuzzy matches found");
-                return new ArrayList<>();
-            }
-
-            // Fetch details only for fuzzy-filtered results and apply additional filters
-            List<Map<String, Object>> filtered = new ArrayList<>();
-            for (Map<String, Object> movie : fuzzyResults) {
-                Integer movieId = (Integer) movie.get("id");
-                String detailsUrl = String.format("%s/movie/%s?api_key=%s", apiUrl, movieId, apiKey);
-                Map<String, Object> details = restTemplate.getForObject(detailsUrl, Map.class);
-                if (details == null) continue;
-
-                boolean matches = true;
-                if (genre != null && !genre.trim().isEmpty()) {
-                    List<Map<String, Object>> genres = (List<Map<String, Object>>) details.get("genres");
-                    boolean genreMatch = false;
-                    if (genres != null) {
-                        for (Map<String, Object> g : genres) {
-                            String gName = (String) g.get("name");
-                            if (gName != null && gName.toLowerCase().contains(genre.toLowerCase())) {
-                                genreMatch = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (!genreMatch) matches = false;
-                }
-                if (director != null && !director.trim().isEmpty()) {
-                    String creditsUrl = String.format("%s/movie/%s/credits?api_key=%s", apiUrl, movieId, apiKey);
-                    Map<String, Object> credits = restTemplate.getForObject(creditsUrl, Map.class);
-                    List<Map<String, Object>> crew = (List<Map<String, Object>>) credits.get("crew");
-                    boolean directorMatch = false;
-                    if (crew != null) {
-                        for (Map<String, Object> crewMember : crew) {
-                            String job = (String) crewMember.get("job");
-                            String name = (String) crewMember.get("name");
-                            if ("Director".equalsIgnoreCase(job) && name != null &&
-                                    name.toLowerCase().contains(director.toLowerCase())) {
-                                directorMatch = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (!directorMatch) matches = false;
-                }
-                if (matches) {
-                    filtered.add(details);
-                }
-            }
-            System.out.println("Final filtered results: " + filtered);
-            return filtered;
-        } catch (Exception e) {
-            System.out.println("Error calling TMDb API: " + e.getMessage());
-            e.printStackTrace();
-            return new ArrayList<>();
-        }
-    }
-
-    private List<Map<String, Object>> searchByDirector(String director, String year) {
-        // Construct search URL for the director
-        String personUrl = String.format("%s/search/person?api_key=%s&query=%s",
-                apiUrl, apiKey, director.replace(" ", "+"));
-        System.out.println("Searching director with URL: " + personUrl);
-
-        // Fetch response
-        Map<String, Object> personResponse = restTemplate.getForObject(personUrl, Map.class);
-        if (personResponse == null || !personResponse.containsKey("results")) {
-            return new ArrayList<>();
-        }
-
-        // Extract list of potential directors
-        List<Map<String, Object>> persons = (List<Map<String, Object>>) personResponse.get("results");
-        if (persons == null || persons.isEmpty()) {
-            return new ArrayList<>();
-        }
-
-        // Find the best matching director
-        Integer directorId = null;
-        for (Map<String, Object> p : persons) {
-            String name = (String) p.get("name");
-            String dept = (String) p.get("known_for_department");
-
-            if (dept != null && dept.equalsIgnoreCase("Directing")) {
-                // If an exact match is found, use it immediately
-                if (name.equalsIgnoreCase(director)) {
-                    directorId = (Integer) p.get("id");
-                    break;
-                }
-                // Store the first match if an exact match isn't found
-                if (directorId == null) {
-                    directorId = (Integer) p.get("id");
-                }
-            }
-        }
-
-        // If no director ID found, return empty result
-        if (directorId == null) {
-            return new ArrayList<>();
-        }
-
-        // Fetch director's movie credits
-        String creditsUrl = String.format("%s/person/%s/movie_credits?api_key=%s",
-                apiUrl, directorId, apiKey);
-        Map<String, Object> creditsResponse = restTemplate.getForObject(creditsUrl, Map.class);
-        if (creditsResponse == null || !creditsResponse.containsKey("crew")) {
-            return new ArrayList<>();
-        }
-
-        // Filter movies directed by the selected director
-        List<Map<String, Object>> crew = (List<Map<String, Object>>) creditsResponse.get("crew");
-        List<Map<String, Object>> movies = new ArrayList<>();
-
-        if (crew != null) {
-            for (Map<String, Object> movie : crew) {
-                String job = (String) movie.get("job");
-
-                // Ensure only movies directed by the person are added
-                if (!"Director".equalsIgnoreCase(job)) continue;
-
-                // Filter by release year if provided
-                if (year != null && !year.trim().isEmpty()) {
-                    String releaseDate = (String) movie.get("release_date");
-                    if (releaseDate == null || !releaseDate.startsWith(year)) {
-                        continue;
-                    }
-                }
-                movies.add(movie);
-            }
-        }
-
-        return movies;
-    }
-
-
-    private List<Map<String, Object>> searchByGenre(String genre, String year) {
-        String normalizedGenre = genre.toLowerCase();
-        String genreId = genreMap.get(normalizedGenre);
-        if (genreId == null) {
-            System.out.println("Invalid genre: " + genre);
-            return new ArrayList<>();
-        }
-        String discoverUrl = String.format("%s/discover/movie?api_key=%s&with_genres=%s", apiUrl, apiKey, genreId);
-        if (year != null && !year.trim().isEmpty()) {
-            discoverUrl += "&primary_release_year=" + year;
-        }
-        System.out.println("Discovering movies by genre with URL: " + discoverUrl);
-        try {
-            Map<String, Object> discoverResponse = restTemplate.getForObject(discoverUrl, Map.class);
-            if (discoverResponse == null || !discoverResponse.containsKey("results")) {
-                return new ArrayList<>();
-            }
-            List<Map<String, Object>> discovered = (List<Map<String, Object>>) discoverResponse.get("results");
-            return discovered != null ? discovered : new ArrayList<>();
-        } catch (Exception e) {
-            System.out.println("Error calling TMDb API: " + e.getMessage());
-            return new ArrayList<>();
-        }
-    }
-
-    private List<Map<String, Object>> searchByYear(String year) {
-        String discoverUrl = String.format("%s/discover/movie?api_key=%s&primary_release_year=%s",
-                apiUrl, apiKey, year);
-        System.out.println("Discovering movies by year with URL: " + discoverUrl);
-        Map<String, Object> discoverResponse = restTemplate.getForObject(discoverUrl, Map.class);
-        List<Map<String, Object>> discovered = (List<Map<String, Object>>) discoverResponse.get("results");
-        return discovered != null ? discovered : new ArrayList<>();
     }
 }

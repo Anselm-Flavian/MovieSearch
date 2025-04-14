@@ -1,45 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 
 const MovieDetails = ({ auth0Client, isAuthenticated }) => {
   const { movieId } = useParams();
   const [movie, setMovie] = useState(null);
-  const [trailerKey, setTrailerKey] = useState(null); // Separate state for trailer
+  const [trailerKey, setTrailerKey] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isHovering, setIsHovering] = useState(false);
   const navigate = useNavigate();
-<<<<<<< HEAD
   const location = useLocation();
-  const baseImageUrl = 'https://image.tmdb.org/t/p/w500';
-  const backendUrl = 'http://localhost:8080/api/movies';
 
-  useEffect(() => {
-    fetchMovieDetails(movieId);
-  }, [movieId]);
-
-  const fetchMovieDetails = async (id) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch(`${backendUrl}/${id}`);
-      if (!response.ok) throw new Error('Failed to fetch movie details');
-      const data = await response.json();
-      setMovieDetails(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleBack = () => {
-    navigate('/', { state: location.state });
-=======
+  const playerRef = useRef(null);
+  const playerInitialized = useRef(false);
 
   const baseImageUrl = 'https://image.tmdb.org/t/p/w500';
   const baseVideoUrl = 'https://www.youtube.com/embed/';
-  const tmdbApiKey = '0ecbd29e4e03cdcfccd72d76ba826345'; // Replace with your TMDB API key
+  const backendUrl = 'http://localhost:8080/api/movies';
+  const tmdbApiKey = '0ecbd29e4e03cdcfccd72d76ba826345';
 
   useEffect(() => {
     const fetchMovieDetails = async () => {
@@ -52,9 +30,8 @@ const MovieDetails = ({ auth0Client, isAuthenticated }) => {
       setError(null);
 
       try {
-        // Fetch movie details from your backend
         const token = await auth0Client.getTokenSilently();
-        const movieResponse = await fetch(`http://localhost:8080/api/movies/${movieId}`, {
+        const movieResponse = await fetch(`${backendUrl}/${movieId}`, {
           headers: {
             Authorization: `Bearer ${token}`,
           },
@@ -65,24 +42,22 @@ const MovieDetails = ({ auth0Client, isAuthenticated }) => {
         }
 
         const movieData = await movieResponse.json();
-        console.log('Movie Data from Backend:', movieData);
+        setMovie(movieData);
 
-        // Fetch trailer directly from TMDB
         const videoResponse = await fetch(
           `https://api.themoviedb.org/3/movie/${movieId}/videos?api_key=${tmdbApiKey}`
         );
+
         if (!videoResponse.ok) {
           throw new Error(`TMDB video fetch error! Status: ${videoResponse.status}`);
         }
 
         const videoData = await videoResponse.json();
-        console.log('Video Data from TMDB:', videoData);
         const trailer = videoData.results?.find(
           video => video.type === 'Trailer' && video.site === 'YouTube'
         )?.key;
-        setTrailerKey(trailer);
 
-        setMovie(movieData);
+        setTrailerKey(trailer);
       } catch (err) {
         console.error('Error fetching movie details:', err);
         setError(err.message);
@@ -94,18 +69,48 @@ const MovieDetails = ({ auth0Client, isAuthenticated }) => {
     fetchMovieDetails();
   }, [movieId, auth0Client, isAuthenticated]);
 
+  // Load YouTube IFrame API
+  useEffect(() => {
+    if (!trailerKey || playerInitialized.current) return;
+
+    const onYouTubeIframeAPIReady = () => {
+      playerRef.current = new window.YT.Player(`youtube-player-${movieId}`, {
+        videoId: trailerKey,
+        events: {
+          onReady: () => {
+            playerInitialized.current = true;
+          },
+        },
+      });
+    };
+
+    if (!window.YT) {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+      window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
+    } else {
+      onYouTubeIframeAPIReady();
+    }
+  }, [trailerKey, movieId]);
+
   const handleBackClick = () => {
-    navigate('/');
->>>>>>> 267d0d5 (Updated movie search project with frontend and backend changes)
+    navigate('/results', { state: location.state });
   };
 
   const handleMouseEnter = () => {
-    console.log('Hovering, trailer:', trailerKey);
     setIsHovering(true);
+    if (playerRef.current && playerInitialized.current) {
+      playerRef.current.playVideo();
+    }
   };
+
   const handleMouseLeave = () => {
-    console.log('Leaving hover');
     setIsHovering(false);
+    if (playerRef.current && playerInitialized.current) {
+      playerRef.current.pauseVideo();
+    }
   };
 
   if (!isAuthenticated) return null;
@@ -118,52 +123,6 @@ const MovieDetails = ({ auth0Client, isAuthenticated }) => {
   );
 
   return (
-<<<<<<< HEAD
-      <div style={{ padding: '20px', maxWidth: '1000px', margin: '0 auto' ,minHeight:"720px"}}>
-        <h1>Movie Details</h1>
-        {loading && <p>Loading...</p>}
-        {error && <p style={{ color: 'red' }}>Error: {error}</p>}
-        {movieDetails && (
-          <div
-            style={{
-              border: '1px solid #ddd',
-              borderRadius: '8px',
-              padding: '20px',
-              backgroundColor: '#f9f9f9',
-              minHeight: '400px',
-            }}
-          >
-            <button
-              onClick={handleBack}
-              style={{ float: 'right', padding: '5px 10px', cursor: 'pointer' }}
-            >
-              Back to Gallery
-            </button>
-            <h2>{movieDetails.title}</h2>
-            {movieDetails.poster_path && (
-              <img
-                src={`${baseImageUrl}${movieDetails.poster_path}`}
-                alt={`${movieDetails.title} Poster`}
-                style={{ width: '200px', borderRadius: '8px', float: 'left', marginRight: '20px'}}
-              />
-            )}
-            <p><strong>Release Date:</strong> {movieDetails.release_date || 'N/A'}</p>
-            <p><strong>Overview:</strong> {movieDetails.overview || 'No overview available.'}</p>
-            <p>
-              <strong>Genres:</strong>{' '}
-              {movieDetails.genres ? movieDetails.genres.map((g) => g.name).join(', ') : 'N/A'}
-            </p>
-            <p><strong>Runtime:</strong> {movieDetails.runtime ? `${movieDetails.runtime} min` : 'N/A'}</p>
-            <p><strong>Rating:</strong> {movieDetails.vote_average || 'N/A'} / 10</p>
-          </div>
-        )}
-      </div>
-    );
-
-};
-
-export default MovieDetails;
-=======
     <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
       <button onClick={handleBackClick} style={buttonStyle}>Back to Gallery</button>
       <h1 style={{ fontSize: '28px', margin: '20px 0' }}>{movie.title}</h1>
@@ -171,30 +130,13 @@ export default MovieDetails;
         <div
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
-          style={{ position: 'relative', width: '300px' }}
+          style={{ position: 'relative', width: '300px', height: '450px' }}
         >
-          {isHovering && trailerKey ? (
-            <iframe
-              src={`${baseVideoUrl}${trailerKey}?autoplay=1&mute=1`}
-              title={`${movie.title} Trailer`}
-              style={{ width: '300px', height: '450px', borderRadius: '8px', border: 'none' }}
-              allow="autoplay; encrypted-media"
-            />
-          ) : isHovering && !trailerKey ? (
+          {trailerKey ? (
             <div
-              style={{
-                width: '300px',
-                height: '450px',
-                backgroundColor: '#000',
-                color: 'white',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: '8px',
-              }}
-            >
-              No Trailer Available
-            </div>
+              id={`youtube-player-${movieId}`}
+              style={{ width: '100%', height: '100%', borderRadius: '8px', overflow: 'hidden' }}
+            ></div>
           ) : movie.poster_path ? (
             <img
               src={`${baseImageUrl}${movie.poster_path}`}
@@ -249,4 +191,3 @@ const buttonStyle = {
 };
 
 export default MovieDetails;
->>>>>>> 267d0d5 (Updated movie search project with frontend and backend changes)

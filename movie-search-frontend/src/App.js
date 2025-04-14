@@ -51,23 +51,22 @@ function AppContent() {
         if (code && state) {
           console.log('Handling redirect callback...', { code, state });
           try {
-            await auth0.handleRedirectCallback();
-            console.log('Redirect callback successful');
-          } catch (err) {
-            console.warn('Callback error (handled):', err.message); // Downgrade to warning
-            const token = await auth0.getTokenSilently({ ignoreCache: true }).catch(() => null);
-            if (token) {
-              console.log('Fallback: Token found, user is authenticated');
-              const userData = await auth0.getUser();
-              setUser(userData);
-              setIsAuthenticated(true);
-            } else {
-              setError(err.message || 'Failed to handle redirect callback');
-              setIsLoading(false);
-              return;
+            // [FIX] Validate state against stored value
+            const storedState = sessionStorage.getItem('auth0_state');
+            if (!storedState || state !== storedState) {
+              throw new Error('Invalid state parameter');
             }
+            await auth0.handleRedirectCallback();
+            sessionStorage.removeItem('auth0_state'); // Clean up
+            console.log('Redirect callback successful');
+            window.history.replaceState({}, document.title, window.location.pathname);
+          } catch (err) {
+            console.error('Callback error:', err.message);
+            // [FIX] Show error instead of bypassing with getTokenSilently
+            setError('Authentication failed: ' + err.message + '. Please try logging in again.');
+            setIsLoading(false);
+            return;
           }
-          window.history.replaceState({}, document.title, window.location.pathname); // Clear URL early
         }
 
         const isAuth = await auth0.isAuthenticated();
@@ -94,7 +93,10 @@ function AppContent() {
     if (auth0Client && !isLoggingIn) {
       setIsLoggingIn(true);
       try {
-        await auth0Client.loginWithRedirect();
+        // [FIX] Generate and store state for validation
+        const state = Math.random().toString(36).substring(2);
+        sessionStorage.setItem('auth0_state', state);
+        await auth0Client.loginWithRedirect({ state });
       } catch (err) {
         console.error('Login error:', err);
         setError(err.message || 'Failed to initiate login');
@@ -117,20 +119,27 @@ function AppContent() {
   const callApi = async () => {
     if (auth0Client) {
       try {
-        console.log('Fetching token silently...');
-        const token = await auth0Client.getTokenSilently();
-        console.log('Access Token:', token);
+        // [NOTE] Remove Authorization header since endpoint is public
         const response = await fetch('http://localhost:8080/api/movies/search?query=action', {
+          method: 'GET',
           headers: {
-            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
           },
+          mode: 'cors',
         });
+
         if (!response.ok) {
+          const errorText = await response.text();
+          console.error('API error:', errorText);
+          // [FIX] Handle 503 specifically
+          if (response.status === 503) {
+            setError('Movie search is temporarily unavailable. Please try again later.');
+            return;
+          }
           throw new Error(`HTTP error! Status: ${response.status}`);
         }
         const data = await response.json();
-        console.log('API Response:', data);
-        navigate('/results');
+        navigate('/results', { state: { initialData: data } });
       } catch (error) {
         console.error('Error calling API:', error);
         setError(error.message || 'Failed to call API');
@@ -147,6 +156,7 @@ function AppContent() {
       <div>
         <h1>Error</h1>
         <p>{error}</p>
+        <button onClick={() => setError(null)}>Clear Error</button>
         <button onClick={login}>Try Logging In Again</button>
       </div>
     );
@@ -159,7 +169,7 @@ function AppContent() {
         <div>
           <p>Welcome, {user?.name}!</p>
           <button onClick={logout}>Log Out</button>
-          <button onClick={callApi}>Call API</button>
+          <button onClick={callApi}>Search Action Movies</button>
         </div>
       ) : (
         <button onClick={login}>Log In</button>
@@ -177,7 +187,6 @@ function AppContent() {
           path="/movies/:movieId"
           element={<MovieDetails auth0Client={auth0Client} isAuthenticated={isAuthenticated} />}
         />
-        {/* Catch-all route to silence unmatched location warning */}
         <Route path="*" element={null} />
       </Routes>
     </div>

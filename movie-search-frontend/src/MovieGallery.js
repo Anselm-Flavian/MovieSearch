@@ -1,99 +1,210 @@
 import React, { useState, useEffect } from 'react';
-<<<<<<< HEAD
-import { useNavigate, useLocation } from 'react-router-dom';
-
-const MovieGallery = () => {
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  const initialState = location.state || {
-    query: '',
-    sortOption: 'popularity.desc',
-    genre: '',
-    rating: 0,
-    director: '',
-  };
-
-  const [query, setQuery] = useState(initialState.query);
-=======
 import { useNavigate } from 'react-router-dom';
 
 const MovieGallery = ({ auth0Client, isAuthenticated }) => {
+  const initialState = {
+    genre: '',
+    director: '',
+    year: ''
+  };
+
   const [query, setQuery] = useState('');
->>>>>>> 267d0d5 (Updated movie search project with frontend and backend changes)
   const [movies, setMovies] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
+  const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [sortOption, setSortOption] = useState(initialState.sortOption);
   const [genre, setGenre] = useState(initialState.genre);
-  const [rating, setRating] = useState(initialState.rating);
   const [director, setDirector] = useState(initialState.director);
+  const [year, setYear] = useState(initialState.year);
   const [favorites, setFavorites] = useState(new Set());
 
+  const navigate = useNavigate();
   const baseImageUrl = 'https://image.tmdb.org/t/p/w500';
   const backendUrl = 'http://localhost:8080/api/movies';
 
-<<<<<<< HEAD
-  // Fetch movies only when sorting/filtering changes
-  useEffect(() => {
-    fetchMovies();
-  }, [sortOption, genre, rating, director]);
-
-  const fetchMovies = async () => {
-=======
   const fetchMovies = async (searchQuery) => {
     if (!searchQuery || !isAuthenticated || !auth0Client) {
       setMovies([]);
+      setError('Please enter a search query and ensure you are logged in.');
       return;
     }
->>>>>>> 267d0d5 (Updated movie search project with frontend and backend changes)
     setLoading(true);
     setError(null);
 
-const url = `${backendUrl}/search?query=${encodeURIComponent(query)}&sort=${encodeURIComponent(sortOption)}&genre=${encodeURIComponent(genre)}&rating=${encodeURIComponent(Number(rating))}&director=${encodeURIComponent(director)}`;
+    const params = new URLSearchParams({ query: searchQuery });
+    if (genre) params.append('genre', genre);
+    if (director) params.append('director', director);
+    if (year) params.append('year', year);
+    const url = `${backendUrl}/search?${params.toString()}`;
 
     try {
-      const token = await auth0Client.getTokenSilently();
+      const user = await auth0Client.getUser();
+      console.log('User info:', user);
+      const token = await auth0Client.getTokenSilently({
+        authorizationParams: {
+          audience: 'https://dev-opqvt1nsdwq040ox.us.auth0.com/api/v2/',
+          scope: 'openid profile email'
+        }
+      });
+      console.log('Fetching movies with token:', token.substring(0, 10) + '...');
       const response = await fetch(url, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
-      if (!response.ok) throw new Error('Failed to fetch movies from backend');
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to fetch movies: ${response.status} ${response.statusText} - ${errorText}`);
+      }
       const data = await response.json();
+      console.log('Movies fetched:', data);
       setMovies(data || []);
     } catch (err) {
-      setError(err.message);
+      console.error('Fetch movies error:', err);
+      setError('Failed to load movies: ' + err.message);
+      setMovies([]);
     } finally {
       setLoading(false);
     }
   };
 
-<<<<<<< HEAD
-  const toggleFavorite = (movieId, event) => {
-    event.stopPropagation();
-    setFavorites((prevFavorites) => {
-      const updatedFavorites = new Set(prevFavorites);
-      if (updatedFavorites.has(movieId)) {
-        updatedFavorites.delete(movieId);
-      } else {
-        updatedFavorites.add(movieId);
+  const fetchSuggestions = async (prefix) => {
+    if (!prefix || !isAuthenticated || !auth0Client) {
+      setSuggestions([]);
+      return;
+    }
+    const url = `${backendUrl}/autocomplete?prefix=${encodeURIComponent(prefix)}`;
+    try {
+      const user = await auth0Client.getUser();
+      console.log('User info for suggestions:', user);
+      const token = await auth0Client.getTokenSilently({
+        authorizationParams: {
+          audience: 'https://dev-opqvt1nsdwq040ox.us.auth0.com/api/v2/',
+          scope: 'openid profile email'
+        }
+      });
+      console.log('Fetching suggestions with token:', token.substring(0, 10) + '...');
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to fetch suggestions: ${response.status} ${response.statusText} - ${errorText}`);
       }
-      return updatedFavorites;
-    });
-=======
+      const data = await response.json();
+      console.log('Suggestions fetched:', data);
+      setSuggestions(data || []);
+    } catch (err) {
+      console.error('Fetch suggestions error:', err);
+      setSuggestions([]);
+      setError('Failed to load suggestions: ' + err.message);
+    }
+  };
+
+  const fetchHistory = async () => {
+    if (!isAuthenticated || !auth0Client) {
+      setHistory([]);
+      setError('Please log in to view search history.');
+      return;
+    }
+    try {
+      const user = await auth0Client.getUser();
+      console.log('User info for history:', user);
+      const token = await auth0Client.getTokenSilently({
+        authorizationParams: {
+          audience: 'https://dev-opqvt1nsdwq040ox.us.auth0.com/api/v2/',
+          scope: 'openid profile email'
+        }
+      });
+      console.log('Fetching history with token:', token.substring(0, 10) + '...');
+      const response = await fetch(`${backendUrl}/history`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to fetch search history: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+      const data = await response.json();
+      const uniqueHistory = Array.from(
+        new Map(data.map(item => [item.movieId, item])).values()
+      );
+      console.log('History fetched:', uniqueHistory);
+      setHistory(uniqueHistory || []);
+    } catch (err) {
+      console.error('Error fetching history:', err);
+      setError('Failed to load search history: ' + err.message);
+      setHistory([]);
+    }
+  };
+
+  const selectMovie = async (movie) => {
+    if (!isAuthenticated || !auth0Client) return;
+    try {
+      const token = await auth0Client.getTokenSilently({
+        authorizationParams: {
+          audience: 'https://dev-opqvt1nsdwq040ox.us.auth0.com/api/v2/',
+          scope: 'openid profile email'
+        }
+      });
+      const response = await fetch(`${backendUrl}/select`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          id: movie.id,
+          title: movie.title,
+          poster_path: movie.poster_path
+        })
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to save selected movie: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+      console.log('Movie selected:', movie.title);
+      await fetchHistory();
+    } catch (err) {
+      console.error('Error selecting movie:', err);
+      setError(`Failed to select movie: ${err.message}`);
+    }
+  };
+
   const handleSearch = (e) => {
     e.preventDefault();
     fetchMovies(query);
+    setSuggestions([]);
   };
 
-  const handleMovieClick = (movieId) => {
-    navigate(`/movies/${movieId}`);
->>>>>>> 267d0d5 (Updated movie search project with frontend and backend changes)
+  const handleInputChange = (e) => {
+    const value = e.target.value;
+    setQuery(value);
+    if (value.length > 1) fetchSuggestions(value);
+    else setSuggestions([]);
+  };
+
+  const handleSuggestionClick = (suggestion) => {
+    setQuery(suggestion);
+    fetchMovies(suggestion);
+    setSuggestions([]);
+  };
+
+  const toggleFavorite = (movieId, e) => {
+    e.stopPropagation();
+    const newFavorites = new Set(favorites);
+    if (newFavorites.has(movieId)) {
+      newFavorites.delete(movieId);
+    } else {
+      newFavorites.add(movieId);
+    }
+    setFavorites(newFavorites);
   };
 
   useEffect(() => {
-    if (!isAuthenticated && auth0Client) {
+    if (isAuthenticated && auth0Client) {
+      fetchHistory();
+    } else if (!isAuthenticated && auth0Client) {
       auth0Client.loginWithRedirect();
     }
   }, [isAuthenticated, auth0Client]);
@@ -104,29 +215,46 @@ const url = `${backendUrl}/search?query=${encodeURIComponent(query)}&sort=${enco
     <div style={{ padding: '20px' }}>
       <h1>Movie Gallery</h1>
 
-      {/* Search Form */}
-      <form onSubmit={(e) => { e.preventDefault(); fetchMovies(); }}>
+      <form onSubmit={handleSearch} style={{ position: 'relative', display: 'inline-block' }}>
         <input
           type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={handleInputChange}
           placeholder="Search for movies..."
-          style={{ padding: '8px', width: '200px', marginRight: '10px' }}
+          style={{ padding: '8px', width: '200px', marginRight: '10px', boxSizing: 'border-box' }}
         />
         <button type="submit" style={{ padding: '8px 16px' }}>Search</button>
+        {suggestions.length > 0 && (
+          <ul style={{
+            position: 'absolute',
+            top: 'calc(100% + 2px)',
+            left: '0',
+            background: 'white',
+            border: '1px solid #ddd',
+            borderTop: 'none',
+            listStyle: 'none',
+            padding: '0',
+            margin: '0',
+            maxHeight: '200px',
+            overflowY: 'auto',
+            zIndex: 1000,
+            width: '200px',
+            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)'
+          }}>
+            {suggestions.map((suggestion, index) => (
+              <li
+                key={index}
+                onClick={() => handleSuggestionClick(suggestion)}
+                style={{ padding: '8px', cursor: 'pointer' }}
+              >
+                {suggestion}
+              </li>
+            ))}
+          </ul>
+        )}
       </form>
 
-      {/* Sorting & Filtering Options */}
       <div style={{ marginTop: '20px', display: 'flex', gap: '20px' }}>
-        <select value={sortOption} onChange={(e) => setSortOption(e.target.value)}>
-          <option value="popularity.desc">Sort by Popularity (High to Low)</option>
-          <option value="popularity.asc">Sort by Popularity (Low to High)</option>
-          <option value="release_date.desc">Newest First</option>
-          <option value="release_date.asc">Oldest First</option>
-          <option value="vote_average.desc">Rating (High to Low)</option>
-          <option value="vote_average.asc">Rating (Low to High)</option>
-        </select>
-
         <select value={genre} onChange={(e) => setGenre(e.target.value)}>
           <option value="">All Genres</option>
           <option value="action">Action</option>
@@ -146,28 +274,98 @@ const url = `${backendUrl}/search?query=${encodeURIComponent(query)}&sort=${enco
           style={{ padding: '8px', width: '200px' }}
         />
 
-        <label>Minimum Rating:</label>
-        <select value={rating} onChange={(e) => setRating(e.target.value)}>
-          {[...Array(11).keys()].map((num) => (
-            <option key={num} value={num}>{num}</option>
-          ))}
-        </select>
+        <input
+          type="text"
+          value={year}
+          onChange={(e) => setYear(e.target.value)}
+          placeholder="Filter by Year"
+          style={{ padding: '8px', width: '100px' }}
+        />
       </div>
 
-      {/* Loading & Error Messages */}
+      <div style={{ marginTop: '20px' }}>
+        <h2>Your History</h2>
+        {history.length > 0 ? (
+          <div
+            style={{
+              display: 'flex',
+              overflowX: 'auto',
+              gap: '20px',
+              paddingBottom: '10px',
+              scrollbarWidth: 'thin'
+            }}
+          >
+            {history.map((movie, index) => (
+              <div
+                key={movie.movieId || `history-${index}`}
+                onClick={() => navigate(`/movies/${movie.movieId}`, { state: { query, genre, director, year } })}
+                style={{
+                  width: '200px',
+                  textAlign: 'center',
+                  cursor: 'pointer',
+                  border: '1px solid #ddd',
+                  borderRadius: '8px',
+                  padding: '10px',
+                  transition: 'transform 0.2s',
+                  position: 'relative',
+                  flexShrink: 0
+                }}
+              >
+                <h4 style={{ fontSize: '16px', margin: '10px 0' }}>{movie.title}</h4>
+                {movie.poster_path ? (
+                  <img
+                    src={`${baseImageUrl}${movie.poster_path}`}
+                    alt={`${movie.title} Poster`}
+                    style={{ width: '100%', borderRadius: '8px' }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      width: '100%',
+                      height: '300px',
+                      backgroundColor: '#ccc',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: '8px'
+                    }}
+                  >
+                    No Poster
+                  </div>
+                )}
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: '10px',
+                    right: '10px',
+                    fontSize: '24px',
+                    cursor: 'pointer',
+                    color: favorites.has(movie.movieId) ? 'red' : 'gray'
+                  }}
+                  onClick={(e) => toggleFavorite(movie.movieId, e)}
+                >
+                  {favorites.has(movie.movieId) ? '❤️' : '🤍'}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p>No movies selected.</p>
+        )}
+      </div>
+
       {loading && <p>Loading...</p>}
       {error && <p style={{ color: 'red' }}>Error: {error}</p>}
       {movies.length === 0 && !loading && !error && query && <p>No movies found.</p>}
 
-      {/* Movie List */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', marginTop: '20px' }}>
-        {movies.map((movie) => (
+        {movies.map((movie, index) => (
           <div
-            key={movie.id}
-<<<<<<< HEAD
-=======
-            onClick={() => handleMovieClick(movie.id)}
->>>>>>> 267d0d5 (Updated movie search project with frontend and backend changes)
+            key={movie.id || `search-${index}`}
+            onClick={() => {
+              selectMovie(movie);
+              navigate(`/movies/${movie.id}`, { state: { query, genre, director, year } });
+            }}
             style={{
               width: '200px',
               textAlign: 'center',
@@ -176,9 +374,8 @@ const url = `${backendUrl}/search?query=${encodeURIComponent(query)}&sort=${enco
               borderRadius: '8px',
               padding: '10px',
               transition: 'transform 0.2s',
-              position: 'relative',
+              position: 'relative'
             }}
-            onClick={() => navigate(`/movies/${movie.id}`, { state: { query, sortOption, genre, rating, director } })}
           >
             <h3 style={{ fontSize: '16px', margin: '10px 0' }}>{movie.title}</h3>
             {movie.poster_path ? (
@@ -196,14 +393,12 @@ const url = `${backendUrl}/search?query=${encodeURIComponent(query)}&sort=${enco
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  borderRadius: '8px',
+                  borderRadius: '8px'
                 }}
               >
                 No Poster
               </div>
             )}
-
-            {/* Favorite Button */}
             <span
               style={{
                 position: 'absolute',
@@ -211,7 +406,7 @@ const url = `${backendUrl}/search?query=${encodeURIComponent(query)}&sort=${enco
                 right: '10px',
                 fontSize: '24px',
                 cursor: 'pointer',
-                color: favorites.has(movie.id) ? 'red' : 'gray',
+                color: favorites.has(movie.id) ? 'red' : 'gray'
               }}
               onClick={(e) => toggleFavorite(movie.id, e)}
             >

@@ -10,11 +10,9 @@ root.render(
   <Auth0Provider
     domain="dev-opqvt1nsdwq040ox.us.auth0.com"
     clientId="XkQrjGwmkJYjgBXhXf49ZL2FIHMc7vkk"
-    authorizationParams={{
-      redirect_uri: window.location.origin,
-      audience: "https://dev-opqvt1nsdwq040ox.us.auth0.com/api/v2/",
-      scope: "openid profile email"
-    }}
+    redirectUri={window.location.origin + '/callback'}
+    audience="https://dev-opqvt1nsdwq040ox.us.auth0.com/api/v2/"
+    scope="openid profile email read:history"
   >
     <App />
   </Auth0Provider>
